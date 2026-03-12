@@ -117,9 +117,9 @@ def _fmt_args(args: dict) -> str:
     return joined if len(joined) <= 120 else joined[:117] + "…"
 
 
-def _preview(text: str, max_len: int = 180) -> str:
-    text = text.replace("\n", "  ").strip()
-    return text if len(text) <= max_len else text[:max_len - 1] + "…"
+def _preview(text: Optional[str], max_len: int = 180) -> str:
+    text = (text or "").replace("\n", "  ").strip()
+    return text if len(text) <= max_len else text[: max_len - 1] + "…"
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +197,7 @@ def run_query(
 
                     elif isinstance(msg, ToolMessage):
                         console.print(
-                            f"    [dim green]Result ↦ {_preview(msg.content)}[/dim green]"
+                            f"    [dim green]Result ↦ {_preview(msg.content or '')}[/dim green]"
                         )
 
         console.print()
