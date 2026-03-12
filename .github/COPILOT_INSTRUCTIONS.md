@@ -3,7 +3,11 @@
 ## Project Overview
 
 **Repository:** `agent-demo`
-**Language & runtime:** Python 3.12 (managed with `pyenv`; local version pin `3.12.11`)
+**Language & runtime:** Python 3.12 (managed with `pyenv` + `pyenv-virtualenv`; local version `3.12.11`)
+**Virtual environment:** a `pyenv-virtualenv` env named `agent` — activate with `pyenv activate agent`
+
+> **Note for assistants:** do not look for a `.venv` folder or use `python -m venv`. The project
+> uses a named pyenv-virtualenv. If packages appear missing, ensure you are in the `agent` env.
 **Purpose:** An interactive AI agent demo built with LangChain + LangGraph that runs a local
 LLM via Ollama. It exposes a multi-tool ReAct agent through a rich terminal UI with three
 run modes: interactive chat, single-shot query, and an automated demo showcase.
@@ -30,13 +34,13 @@ agent-demo/
 |---|---|
 | `main.py` | Argparse (`--demo`, `-q`), Rich console panels, streaming message loop |
 | `agent/config.py` | Central config via `python-dotenv`; runtime-tunable via env vars |
-| `agent/core.py` | Instantiates `ChatOllama`, injects `SYSTEM_PROMPT`, calls `create_react_agent` |
+| `agent/core.py` | Instantiates `ChatOllama`, injects `SYSTEM_PROMPT`, calls `langchain.agents.create_agent` |
 | `agent/tools.py` | Defines and exports `TOOLS` list with all 5 agent tools |
 
 ### LLM & framework
 
 - **LLM backend:** Ollama (default: `http://localhost:11434`), model `qwen3.5`
-- **Agent type:** LangGraph `create_react_agent` (ReAct loop, configurable recursion limit)
+- **Agent type:** `langchain.agents.create_agent` (ReAct loop backed by LangGraph; returns a `CompiledStateGraph`)
 - **Orchestration:** LangChain Core + LangChain Ollama + LangGraph
 - **UI:** `rich` (panels, tables, markdown rendering, spinner)
 
@@ -92,11 +96,21 @@ python main.py --demo
 ### Quick local setup
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+# One-time: create the pyenv-virtualenv (Python 3.12 must already be installed via pyenv)
+pyenv virtualenv 3.12.11 agent
+
+# Activate the environment (do this every session, or set it as the local default)
+pyenv activate agent
+# Alternatively, pin it to this directory so it activates automatically:
+pyenv local agent
+
+# Install dependencies
 pip install -r requirements.txt
-# Ensure Ollama is running and qwen3.5 is pulled
+
+# Ensure Ollama is running and the model is pulled
 ollama pull qwen3.5
+
+# Run
 python main.py
 ```
 

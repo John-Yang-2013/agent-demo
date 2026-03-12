@@ -1,7 +1,7 @@
 """Agent core — creates the LangGraph ReAct agent backed by a local Ollama LLM."""
 
 from langchain_ollama import ChatOllama
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent as _create_agent
 
 from .config import OLLAMA_BASE_URL, MODEL_NAME, TEMPERATURE, RECURSION_LIMIT
 from .tools import TOOLS
@@ -39,5 +39,5 @@ def create_agent():
         num_predict=4096,
     )
 
-    agent = create_react_agent(llm, TOOLS, prompt=SYSTEM_PROMPT)
+    agent = _create_agent(llm, TOOLS, system_prompt=SYSTEM_PROMPT)
     return agent, TOOLS, RECURSION_LIMIT

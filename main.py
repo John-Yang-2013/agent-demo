@@ -17,7 +17,6 @@ from typing import Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from rich import box
-from rich.columns import Columns
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
