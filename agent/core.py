@@ -1,21 +1,29 @@
 """Agent core — creates the LangGraph ReAct agent backed by a local Ollama LLM."""
 
-from langchain_ollama import ChatOllama
 from langchain.agents import create_agent as _create_agent
+from langchain_ollama import ChatOllama
 
-from .config import OLLAMA_BASE_URL, MODEL_NAME, TEMPERATURE, RECURSION_LIMIT
-from .tools import TOOLS
+from .config import config
+from .tools import get_tools
 
-SYSTEM_PROMPT = """\
-You are a highly capable AI assistant with access to real-time tools.
+
+def _summary_line(tool) -> str:
+    """First non-empty line of a tool's description (its summary sentence)."""
+    for line in (tool.description or "").strip().splitlines():
+        if line.strip():
+            return line.strip()
+    return "(no description)"
+
+
+def _build_system_prompt() -> str:
+    """Build the system prompt dynamically from the registered tools."""
+    tool_lines = [f"  • {t.name} — {_summary_line(t)}" for t in get_tools()]
+
+    return f"""You are a highly capable AI assistant with access to real-time tools.
 Think step-by-step and use the right tool for each part of a question.
 
 Available tools:
-  • calculator         — safe arithmetic and math functions (sqrt, sin, log, etc.)
-  • get_current_datetime — current date/time in any timezone; day-of-week, week number
-  • get_weather        — live weather for any city or location worldwide
-  • wikipedia_search   — factual knowledge: science, history, people, places, concepts
-  • unit_converter     — convert between length, mass, speed, temperature, data, time…
+{chr(10).join(tool_lines)}
 
 Rules:
 1. Always use the calculator for any numeric computation — never compute mentally.
@@ -30,14 +38,16 @@ def create_agent():
     """Initialise the ChatOllama model and build the LangGraph ReAct agent.
 
     Returns:
-        (agent, tools) — the compiled agent graph and the list of tool objects.
+        (agent, tools, recursion_limit) — the compiled agent graph, the list of tool objects, and recursion limit.
     """
     llm = ChatOllama(
-        model=MODEL_NAME,
-        base_url=OLLAMA_BASE_URL,
-        temperature=TEMPERATURE,
+        model=config.MODEL_NAME,
+        base_url=config.OLLAMA_BASE_URL,
+        temperature=config.TEMPERATURE,
         num_predict=4096,
     )
 
-    agent = _create_agent(llm, TOOLS, system_prompt=SYSTEM_PROMPT)
-    return agent, TOOLS, RECURSION_LIMIT
+    prompt = _build_system_prompt()
+    tools = get_tools()
+    agent = _create_agent(llm, tools, system_prompt=prompt)
+    return agent, tools, config.RECURSION_LIMIT

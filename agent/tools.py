@@ -12,11 +12,37 @@ Tools:
 import ast
 import math
 import operator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 import requests
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool
+from langchain_core.tools import tool as lc_tool
+
+try:  # Optional dependency — only needed by the wikipedia_search tool.
+    import wikipedia as _wikipedia
+except ImportError:  # pragma: no cover — depends on environment
+    _wikipedia = None
+
+# Global tool registry
+_TOOL_REGISTRY: list[BaseTool] = []
+
+
+def tool(func):
+    """Register a tool function and decorate it with langchain's @tool.
+
+    This decorator automatically registers the function in our tool registry.
+    """
+    # Decorate with langchain's @tool first
+    wrapped = lc_tool(func)
+    # Register the langchain tool instance（供 get_tools 返回结构化工具）
+    _TOOL_REGISTRY.append(wrapped)
+    return wrapped
+
+
+def get_tools():
+    """Get all registered tools as langchain tool instances."""
+    return _TOOL_REGISTRY.copy()
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +66,7 @@ _UNARY_OPS: dict = {
 
 _SAFE_NAMES: dict = {
     "sqrt": math.sqrt,
-    "cbrt": lambda x: x ** (1 / 3),
+    "cbrt": math.cbrt,
     "sin": math.sin,
     "cos": math.cos,
     "tan": math.tan,
@@ -68,7 +94,7 @@ def _safe_eval_node(node: ast.expr):
             raise ValueError(f"Unsupported literal type: {type(node.value).__name__}")
         return node.value
     elif isinstance(node, ast.BinOp):
-        op_type = type(node.op)
+        op_type: type = type(node.op)
         if op_type not in _BINARY_OPS:
             raise ValueError(f"Unsupported operator: {op_type.__name__}")
         left = _safe_eval_node(node.left)
@@ -128,6 +154,7 @@ def calculator(expression: str) -> str:
 # 2. Date / Time
 # ---------------------------------------------------------------------------
 
+
 @tool
 def get_current_datetime(timezone_name: str = "UTC") -> str:
     """
@@ -141,6 +168,7 @@ def get_current_datetime(timezone_name: str = "UTC") -> str:
     """
     try:
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
         try:
             tz = ZoneInfo(timezone_name)
         except (ZoneInfoNotFoundError, KeyError):
@@ -148,7 +176,9 @@ def get_current_datetime(timezone_name: str = "UTC") -> str:
 
         now = datetime.now(tz)
         day_of_year = now.timetuple().tm_yday
-        days_in_year = 366 if (now.year % 4 == 0 and (now.year % 100 != 0 or now.year % 400 == 0)) else 365
+        days_in_year = (
+            366 if (now.year % 4 == 0 and (now.year % 100 != 0 or now.year % 400 == 0)) else 365
+        )
         days_remaining = days_in_year - day_of_year
         week_num = now.isocalendar()[1]
 
@@ -163,13 +193,16 @@ def get_current_datetime(timezone_name: str = "UTC") -> str:
             f"  Unix Timestamp: {int(now.timestamp())}"
         )
     except Exception as exc:
-        now = datetime.now(timezone.utc)
-        return f"Current UTC time: {now.strftime('%Y-%m-%d %H:%M:%S')} UTC  (fallback — error: {exc})"
+        now = datetime.now(UTC)
+        return (
+            f"Current UTC time: {now.strftime('%Y-%m-%d %H:%M:%S')} UTC  (fallback — error: {exc})"
+        )
 
 
 # ---------------------------------------------------------------------------
 # 3. Weather — wttr.in JSON API (no key required)
 # ---------------------------------------------------------------------------
+
 
 @tool
 def get_weather(location: str) -> str:
@@ -248,6 +281,7 @@ def get_weather(location: str) -> str:
 # 4. Wikipedia Search
 # ---------------------------------------------------------------------------
 
+
 @tool
 def wikipedia_search(query: str) -> str:
     """
@@ -260,7 +294,9 @@ def wikipedia_search(query: str) -> str:
     Returns: article title, 5-sentence summary, and source URL.
     """
     try:
-        import wikipedia as wiki
+        if _wikipedia is None:
+            return "Wikipedia package not installed. Run: pip install wikipedia"
+        wiki = _wikipedia
 
         wiki.set_lang("en")
         search_results = wiki.search(query, results=5)
@@ -271,11 +307,7 @@ def wikipedia_search(query: str) -> str:
             try:
                 page = wiki.page(title, auto_suggest=False)
                 summary = wiki.summary(title, sentences=6, auto_suggest=False)
-                return (
-                    f"**{page.title}**\n\n"
-                    f"{summary}\n\n"
-                    f"Source: {page.url}"
-                )
+                return f"**{page.title}**\n\n" f"{summary}\n\n" f"Source: {page.url}"
             except wiki.DisambiguationError as exc:
                 # Try the first disambiguation option
                 if exc.options:
@@ -295,8 +327,6 @@ def wikipedia_search(query: str) -> str:
                 continue
 
         return f"Could not retrieve a Wikipedia article for '{query}'. Tried: {', '.join(search_results[:3])}."
-    except ImportError:
-        return "Wikipedia package not installed. Run: pip install wikipedia"
     except Exception as exc:
         return f"Wikipedia search error: {exc}"
 
@@ -306,80 +336,150 @@ def wikipedia_search(query: str) -> str:
 # ---------------------------------------------------------------------------
 
 # Conversion tables — all values are multipliers to the SI base unit.
-_LENGTH = {   # base: metre
-    "mm": 1e-3, "cm": 1e-2, "m": 1, "km": 1e3,
-    "inch": 0.0254, "in": 0.0254, "inches": 0.0254,
-    "foot": 0.3048, "ft": 0.3048, "feet": 0.3048,
-    "yard": 0.9144, "yd": 0.9144, "yards": 0.9144,
-    "mile": 1609.344, "mi": 1609.344, "miles": 1609.344,
-    "nautical_mile": 1852, "nmi": 1852,
-    "light_year": 9.4607e15, "ly": 9.4607e15,
+_LENGTH = {  # base: metre
+    "mm": 1e-3,
+    "cm": 1e-2,
+    "m": 1,
+    "km": 1e3,
+    "inch": 0.0254,
+    "in": 0.0254,
+    "inches": 0.0254,
+    "foot": 0.3048,
+    "ft": 0.3048,
+    "feet": 0.3048,
+    "yard": 0.9144,
+    "yd": 0.9144,
+    "yards": 0.9144,
+    "mile": 1609.344,
+    "mi": 1609.344,
+    "miles": 1609.344,
+    "nautical_mile": 1852,
+    "nmi": 1852,
+    "light_year": 9.4607e15,
+    "ly": 9.4607e15,
     "au": 1.496e11,  # astronomical unit
 }
 
-_WEIGHT = {   # base: kilogram
-    "mg": 1e-6, "g": 1e-3, "kg": 1, "tonne": 1e3, "t": 1e3,
-    "ounce": 0.0283495, "oz": 0.0283495,
-    "pound": 0.453592, "lb": 0.453592, "lbs": 0.453592, "pounds": 0.453592,
-    "stone": 6.35029, "st": 6.35029,
+_WEIGHT = {  # base: kilogram
+    "mg": 1e-6,
+    "g": 1e-3,
+    "kg": 1,
+    "tonne": 1e3,
+    "t": 1e3,
+    "ounce": 0.0283495,
+    "oz": 0.0283495,
+    "pound": 0.453592,
+    "lb": 0.453592,
+    "lbs": 0.453592,
+    "pounds": 0.453592,
+    "stone": 6.35029,
+    "st": 6.35029,
     "ton": 907.185,  # US short ton
 }
 
-_SPEED = {    # base: m/s
-    "mps": 1, "m/s": 1,
-    "kph": 1 / 3.6, "km/h": 1 / 3.6, "kmh": 1 / 3.6,
+_SPEED = {  # base: m/s
+    "mps": 1,
+    "m/s": 1,
+    "kph": 1 / 3.6,
+    "km/h": 1 / 3.6,
+    "kmh": 1 / 3.6,
     "mph": 0.44704,
-    "knot": 0.514444, "kn": 0.514444, "knots": 0.514444,
+    "knot": 0.514444,
+    "kn": 0.514444,
+    "knots": 0.514444,
     "fps": 0.3048,  # feet per second
     "mach": 340.29,
 }
 
-_AREA = {     # base: m²
-    "sq_m": 1, "m2": 1,
-    "sq_km": 1e6, "km2": 1e6,
-    "sq_cm": 1e-4, "cm2": 1e-4,
-    "sq_ft": 0.092903, "ft2": 0.092903,
-    "sq_yd": 0.836127, "yd2": 0.836127,
-    "sq_mile": 2.58999e6, "mi2": 2.58999e6,
-    "hectare": 1e4, "ha": 1e4,
+_AREA = {  # base: m²
+    "sq_m": 1,
+    "m2": 1,
+    "sq_km": 1e6,
+    "km2": 1e6,
+    "sq_cm": 1e-4,
+    "cm2": 1e-4,
+    "sq_ft": 0.092903,
+    "ft2": 0.092903,
+    "sq_yd": 0.836127,
+    "yd2": 0.836127,
+    "sq_mile": 2.58999e6,
+    "mi2": 2.58999e6,
+    "hectare": 1e4,
+    "ha": 1e4,
     "acre": 4046.86,
 }
 
-_VOLUME = {   # base: litre
-    "ml": 0.001, "l": 1, "liter": 1, "litre": 1,
-    "cl": 0.01, "dl": 0.1,
-    "gallon": 3.78541, "gallon_us": 3.78541, "gal": 3.78541,
+_VOLUME = {  # base: litre
+    "ml": 0.001,
+    "l": 1,
+    "liter": 1,
+    "litre": 1,
+    "cl": 0.01,
+    "dl": 0.1,
+    "gallon": 3.78541,
+    "gallon_us": 3.78541,
+    "gal": 3.78541,
     "gallon_uk": 4.54609,
     "cup": 0.236588,
-    "pint": 0.473176, "pint_us": 0.473176, "pt": 0.473176,
-    "quart": 0.946353, "quart_us": 0.946353, "qt": 0.946353,
-    "fl_oz": 0.0295735, "fluid_oz": 0.0295735,
-    "tbsp": 0.0147868, "tsp": 0.00492892,
-    "cubic_m": 1000, "m3": 1000,
+    "pint": 0.473176,
+    "pint_us": 0.473176,
+    "pt": 0.473176,
+    "quart": 0.946353,
+    "quart_us": 0.946353,
+    "qt": 0.946353,
+    "fl_oz": 0.0295735,
+    "fluid_oz": 0.0295735,
+    "tbsp": 0.0147868,
+    "tsp": 0.00492892,
+    "cubic_m": 1000,
+    "m3": 1000,
 }
 
-_DATA = {     # base: byte
+_DATA = {  # base: byte
     "bit": 0.125,
-    "byte": 1, "b": 1,
-    "kb": 1024, "kilobyte": 1024,
-    "mb": 1024 ** 2, "megabyte": 1024 ** 2,
-    "gb": 1024 ** 3, "gigabyte": 1024 ** 3,
-    "tb": 1024 ** 4, "terabyte": 1024 ** 4,
-    "pb": 1024 ** 5, "petabyte": 1024 ** 5,
-    "kib": 1024, "mib": 1024 ** 2, "gib": 1024 ** 3, "tib": 1024 ** 4,
+    "byte": 1,
+    "b": 1,
+    "kb": 1024,
+    "kilobyte": 1024,
+    "mb": 1024**2,
+    "megabyte": 1024**2,
+    "gb": 1024**3,
+    "gigabyte": 1024**3,
+    "tb": 1024**4,
+    "terabyte": 1024**4,
+    "pb": 1024**5,
+    "petabyte": 1024**5,
+    "kib": 1024,
+    "mib": 1024**2,
+    "gib": 1024**3,
+    "tib": 1024**4,
 }
 
-_TIME = {     # base: second
-    "ns": 1e-9, "nanosecond": 1e-9,
-    "us": 1e-6, "microsecond": 1e-6,
-    "ms": 1e-3, "millisecond": 1e-3,
-    "s": 1, "second": 1, "sec": 1, "seconds": 1,
-    "min": 60, "minute": 60, "minutes": 60,
-    "h": 3600, "hr": 3600, "hour": 3600, "hours": 3600,
-    "d": 86400, "day": 86400, "days": 86400,
-    "week": 604800, "wk": 604800,
-    "month": 2628000,   # avg 30.4375 days
-    "year": 31557600,   # Julian year
+_TIME = {  # base: second
+    "ns": 1e-9,
+    "nanosecond": 1e-9,
+    "us": 1e-6,
+    "microsecond": 1e-6,
+    "ms": 1e-3,
+    "millisecond": 1e-3,
+    "s": 1,
+    "second": 1,
+    "sec": 1,
+    "seconds": 1,
+    "min": 60,
+    "minute": 60,
+    "minutes": 60,
+    "h": 3600,
+    "hr": 3600,
+    "hour": 3600,
+    "hours": 3600,
+    "d": 86400,
+    "day": 86400,
+    "days": 86400,
+    "week": 604800,
+    "wk": 604800,
+    "month": 2628000,  # avg 30.4375 days
+    "year": 31557600,  # Julian year
     "yr": 31557600,
     "decade": 315576000,
     "century": 3155760000,
@@ -395,7 +495,34 @@ _CATEGORIES = [
     (_TIME, "time", "second"),
 ]
 
-_TEMP_UNITS = {"celsius", "c", "fahrenheit", "f", "kelvin", "k", "rankine", "r"}
+# Temperature units are non-linear, so they can't share the multiplier tables.
+# Map every accepted alias to a canonical scale key and pivot through Celsius.
+_TEMP_ALIASES = {
+    "celsius": "c",
+    "centigrade": "c",
+    "c": "c",
+    "fahrenheit": "f",
+    "f": "f",
+    "kelvin": "k",
+    "k": "k",
+    "rankine": "r",
+    "r": "r",
+}
+_TEMP_UNITS = set(_TEMP_ALIASES)
+
+_TO_CELSIUS = {
+    "c": lambda v: v,
+    "f": lambda v: (v - 32) * 5 / 9,
+    "k": lambda v: v - 273.15,
+    "r": lambda v: (v - 491.67) * 5 / 9,
+}
+
+_FROM_CELSIUS = {
+    "c": lambda c: c,
+    "f": lambda c: c * 9 / 5 + 32,
+    "k": lambda c: c + 273.15,
+    "r": lambda c: (c + 273.15) * 9 / 5,
+}
 
 
 def _format_number(value: float) -> str:
@@ -435,44 +562,17 @@ def unit_converter(value: float, from_unit: str, to_unit: str) -> str:
 
     # --- Temperature (non-linear, special case) ---
     if fu in _TEMP_UNITS and tu in _TEMP_UNITS:
-        # Normalise to first letter: c / f / k / r
-        fc = fu[0]
-        tc = tu[0]
-
-        # To Celsius
-        if fc == "c":
-            celsius = value
-        elif fc == "f":
-            celsius = (value - 32) * 5 / 9
-        elif fc == "k":
-            celsius = value - 273.15
-        elif fc == "r":
-            celsius = (value - 491.67) * 5 / 9
-        else:
-            return f"Unknown temperature unit '{from_unit}'."
-
-        # From Celsius to target
-        if tc == "c":
-            result = celsius
-        elif tc == "f":
-            result = celsius * 9 / 5 + 32
-        elif tc == "k":
-            result = celsius + 273.15
-        elif tc == "r":
-            result = (celsius + 273.15) * 9 / 5
-        else:
-            return f"Unknown temperature unit '{to_unit}'."
+        celsius = _TO_CELSIUS[_TEMP_ALIASES[fu]](value)
+        result = _FROM_CELSIUS[_TEMP_ALIASES[tu]](celsius)
 
         return f"{_format_number(value)} {from_unit} = {_format_number(result)} {to_unit}  (temperature)"
 
     # --- Linear categories ---
-    for table, category, base_unit in _CATEGORIES:
+    for table, category, _base_unit in _CATEGORIES:
         if fu in table and tu in table:
             base_value = value * table[fu]
             result = base_value / table[tu]
-            return (
-                f"{_format_number(value)} {from_unit} = {_format_number(result)} {to_unit}  ({category})"
-            )
+            return f"{_format_number(value)} {from_unit} = {_format_number(result)} {to_unit}  ({category})"
 
     # Units found in different categories?
     from_cat = next((cat for tbl, cat, _ in _CATEGORIES if fu in tbl), None)
@@ -486,4 +586,5 @@ def unit_converter(value: float, from_unit: str, to_unit: str) -> str:
     )
 
 
-TOOLS = [calculator, get_current_datetime, get_weather, wikipedia_search, unit_converter]
+# TOOLS is now auto-populated by the @tool decorators above
+TOOLS = get_tools()
