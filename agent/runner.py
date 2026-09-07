@@ -8,9 +8,10 @@ Keeping this separate from `ui.py` means the presentation primitives are pure
 and the orchestration logic can be tested / replaced independently.
 """
 
+import time
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
 from . import ui
 from .config import config
@@ -19,6 +20,30 @@ from .scenarios import DEMO_SCENARIOS
 
 # Connection-related substrings that indicate the Ollama server is unreachable.
 _CONNECTION_HINTS = ("connection refused", "cannot connect", "connect")
+
+# Transient failures are retried with exponential backoff; everything else
+# fails fast. `_sleep` is injectable so tests never actually wait.
+_sleep = time.sleep
+
+_TRANSIENT_EXC_TYPES = (ConnectionError, TimeoutError, OSError)
+_TRANSIENT_HINTS = (
+    "connect",
+    "connection",
+    "timeout",
+    "timed out",
+    "refused",
+    "reset",
+    "unreachable",
+    "broken pipe",
+)
+
+
+def _is_transient(exc: Exception) -> bool:
+    """Best-effort check whether an error is a transient network hiccup."""
+    if isinstance(exc, _TRANSIENT_EXC_TYPES):
+        return True
+    msg = str(exc).lower()
+    return any(hint in msg for hint in _TRANSIENT_HINTS)
 
 
 def _content_str(content: str | list[str | dict[str, Any]] | None) -> str:
@@ -57,60 +82,102 @@ def run_query(
     replayed to the agent and the finished exchange (user message + agent
     replies and tool traffic) is appended to the memory afterwards. Without
     it the call stays stateless, exactly as before.
+
+    Answers are streamed token-by-token when ``STREAM_TOKENS`` is on, and
+    transient network failures are retried with exponential backoff
+    (``LLM_RETRIES`` / ``LLM_RETRY_DELAY``).
     """
     if show_panel:
         ui.render_user_query(query)
 
     history = memory.as_list() if memory is not None else []
     messages = [*history, HumanMessage(content=query)]
-    new_turn: list[Any] = [HumanMessage(content=query)]
-    final_answer: str | None = None
-    tool_step = 0
 
-    ui.render_thinking()
+    max_attempts = config.LLM_RETRIES + 1
+    delay = config.LLM_RETRY_DELAY
 
-    try:
-        for event in agent.stream(
-            {"messages": messages},
-            stream_mode="updates",
-            config={"recursion_limit": recursion_limit},
-        ):
-            # event.items() yields (node_name, {"messages": [Message1, ...]})
-            # we only care about the messages, not the node names.
-            messages_container: dict = next(iter(event.values()), {})
-            for msg in messages_container.get("messages", []):
-                new_turn.append(msg)
-                if isinstance(msg, AIMessage):
-                    if msg.tool_calls:
-                        for tc in msg.tool_calls:
-                            tool_step += 1
-                            ui.render_tool_call(tool_step, tc["name"], tc["args"])
-                    else:
-                        content = ui.strip_thinking(_content_str(msg.content))
-                        if content:
-                            final_answer = content
-                elif isinstance(msg, ToolMessage):
-                    ui.render_tool_result(_content_str(msg.content))
+    for attempt in range(1, max_attempts + 1):
+        new_turn: list[Any] = [HumanMessage(content=query)]
+        final_answer: str | None = None
+        tool_step = 0
+        live = ui.LiveTokenStream() if (config.STREAM_TOKENS and show_panel) else None
 
-        ui.render_blank()
+        ui.render_thinking()
 
-        if final_answer:
-            ui.render_final_answer(final_answer)
-        else:
-            ui.render_no_answer()
+        try:
+            for mode, data in agent.stream(
+                {"messages": messages},
+                stream_mode=["updates", "messages"],
+                config={"recursion_limit": recursion_limit},
+            ):
+                if mode == "messages":
+                    # (message_chunk, metadata) — stream final-answer tokens
+                    # live. Only chunks from the model node carry answer text;
+                    # tool-node messages are rendered via "updates" below.
+                    chunk, meta = data
+                    if (
+                        live is not None
+                        and meta.get("langgraph_node") == "model"
+                        and isinstance(chunk, AIMessageChunk)
+                    ):
+                        text = _content_str(chunk.content)
+                        if text:
+                            live.feed(text)
+                    continue
 
-        if memory is not None:
-            memory.add_turn(new_turn)
+                # "updates" — data is {node_name: {"messages": [Message1, …]}};
+                # we only care about the messages, not the node names.
+                node_updates: dict = data if isinstance(data, dict) else {}
+                messages_container: dict = next(iter(node_updates.values()), {})
+                for msg in messages_container.get("messages", []):
+                    new_turn.append(msg)
+                    if isinstance(msg, AIMessage):
+                        if msg.tool_calls:
+                            if live is not None:
+                                live.end_segment()  # narration ends, tool panel follows
+                            for tc in msg.tool_calls:
+                                tool_step += 1
+                                ui.render_tool_call(tool_step, tc["name"], tc["args"])
+                        else:
+                            content = ui.strip_thinking(_content_str(msg.content))
+                            if content:
+                                final_answer = content
+                    elif isinstance(msg, ToolMessage):
+                        ui.render_tool_result(_content_str(msg.content))
 
-        return final_answer
+            if live is not None:
+                live.finish()
 
-    except Exception as exc:
-        err = str(exc)
-        if any(hint in err.lower() for hint in _CONNECTION_HINTS):
-            ui.render_connection_error()
-        else:
-            ui.render_error(err)
-        return None
+            ui.render_blank()
+
+            if final_answer:
+                if live is None or not live.segment_printed:
+                    ui.render_final_answer(final_answer)
+                # else: the answer was already rendered live, token by token
+            else:
+                ui.render_no_answer()
+
+            if memory is not None:
+                memory.add_turn(new_turn)
+
+            return final_answer
+
+        except Exception as exc:
+            if live is not None:
+                live.finish()  # close a half-printed line before error output
+            if _is_transient(exc) and attempt < max_attempts:
+                ui.render_retry(attempt, max_attempts, delay)
+                _sleep(delay)
+                delay *= 2
+                continue
+            err = str(exc)
+            if any(hint in err.lower() for hint in _CONNECTION_HINTS):
+                ui.render_connection_error()
+            else:
+                ui.render_error(err)
+            return None
+
+    return None  # unreachable: the last attempt always returns above
 
 
 # --------------------------------------------------------------------------- #

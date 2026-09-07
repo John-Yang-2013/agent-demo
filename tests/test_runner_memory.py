@@ -20,7 +20,7 @@ class FakeAgent:
         self, payload: dict, stream_mode: str | None = None, config: dict | None = None
     ) -> Iterator[dict[str, dict[str, list[Any]]]]:
         self.inputs.append(payload)
-        yield {"agent": {"messages": [AIMessage(content=self.answer)]}}
+        yield ("updates", {"agent": {"messages": [AIMessage(content=self.answer)]}})
 
 
 def test_run_query_appends_turn_to_memory() -> None:
@@ -60,7 +60,7 @@ def test_run_query_does_not_save_partial_turn_on_error() -> None:
         def stream(
             self, payload: dict, stream_mode: str | None = None, config: dict | None = None
         ) -> Iterator[dict[str, dict[str, list[Any]]]]:
-            yield {"agent": {"messages": [AIMessage(content="partial")]}}
+            yield ("updates", {"agent": {"messages": [AIMessage(content="partial")]}})
             raise RuntimeError("boom")
 
     memory = ConversationMemory()

@@ -59,6 +59,17 @@ class AgentConfig(BaseModel):
         default=4096, ge=128, le=32768, description="Max tokens the model may generate"
     )
 
+    # Streaming & resilience (stage 2)
+    STREAM_TOKENS: bool = Field(
+        default=True, description="Stream answer tokens live (typewriter effect)"
+    )
+    LLM_RETRIES: int = Field(
+        default=2, ge=0, le=5, description="Retries for transient LLM/network failures"
+    )
+    LLM_RETRY_DELAY: float = Field(
+        default=1.0, ge=0.0, le=30.0, description="Base retry delay (s) — doubles each retry"
+    )
+
     @property
     def RECURSION_LIMIT(self) -> int:
         """LangGraph recursion limit = MAX_ITERATIONS * 2 + 1."""
@@ -77,6 +88,9 @@ _ENV_FIELDS = (
     "WIKIPEDIA_CACHE_TTL",
     "NUM_CTX",
     "NUM_PREDICT",
+    "STREAM_TOKENS",
+    "LLM_RETRIES",
+    "LLM_RETRY_DELAY",
 )
 
 _config: AgentConfig | None = None

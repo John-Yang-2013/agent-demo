@@ -141,8 +141,8 @@
 6. ✅ **对话记忆**：`agent/memory.py` 滑动窗口（`HISTORY_MAX_MESSAGES`），交互模式多轮追问，`clear` 命令重置。
 7. ✅ **工具动态注册**：`@tool` 装饰器自动注册到 `_TOOL_REGISTRY`，system prompt / banner 动态生成。
 8. ✅ **工具结果缓存**：`agent/cache.py` TTLCache（weather 10 分钟 / wikipedia 1 小时，env 可调）。
-9. 🟡 **重试与超时**：工具 HTTP 层已完成（`requests.Session` + urllib3 `Retry` 指数退避）；LLM 调用层重试待做。
-10. ⏳ **流式 token 输出**：`stream_mode="values"` 或 `astream` 实现 token 级打字机效果。
+9. ✅ **重试与超时**：工具 HTTP 层 `requests.Session` + urllib3 `Retry` 指数退避；LLM 调用层瞬态错误指数退避重跑（`LLM_RETRIES`/`LLM_RETRY_DELAY`，`_is_transient` 启发式判定）。
+10. ✅ **流式 token 输出**：`stream_mode=["updates","messages"]` 双模式 — updates 保留工具渲染与记忆，messages 逐 token 打字机（`LiveTokenStream`）；`ThinkTagFilter` 处理跨 chunk 分裂的 `<think>` 标签；`STREAM_TOKENS=false` 回退经典面板。
 
 ### 阶段三：能力扩展（更"Agent"）
 11. **新工具**：web 搜索（DuckDuckGo/SerpAPI）、文件读写、代码执行（沙箱）、RAG 文档检索。

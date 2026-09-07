@@ -50,6 +50,130 @@ def preview(text: str | None, max_len: int = 180) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Token streaming (stage 2)
+# --------------------------------------------------------------------------- #
+
+_OPEN_THINK = "<think>"
+_CLOSE_THINK = "</think>"
+
+
+class ThinkTagFilter:
+    """Stateful filter that removes <think>…</think> spans from a token stream.
+
+    Reasoning models (e.g. qwen3) may wrap internal monologue in think tags,
+    and those tags can be split across chunk boundaries — so the filter
+    buffers a short tail until it can rule out a partial tag. Pure logic,
+    trivially unit-testable.
+    """
+
+    def __init__(self) -> None:
+        self._in_think = False
+        self._pending = ""
+
+    def feed(self, token: str) -> str:
+        """Consume one token; return whatever is certainly visible (may be '')."""
+        self._pending += token
+        visible: list[str] = []
+        while True:
+            if self._in_think:
+                end = self._pending.find(_CLOSE_THINK)
+                if end == -1:
+                    # Retain a suffix that could still become the closing tag.
+                    keep = min(len(self._pending), len(_CLOSE_THINK) - 1)
+                    self._pending = self._pending[-keep:] if keep else ""
+                    return "".join(visible)
+                self._pending = self._pending[end + len(_CLOSE_THINK) :]
+                self._in_think = False
+            else:
+                start = self._pending.find(_OPEN_THINK)
+                if start == -1:
+                    # Retain a suffix that could still become the opening tag.
+                    keep = min(len(self._pending), len(_OPEN_THINK) - 1)
+                    if keep:
+                        visible.append(self._pending[:-keep])
+                        self._pending = self._pending[-keep:]
+                    else:
+                        visible.append(self._pending)
+                        self._pending = ""
+                    return "".join(visible)
+                visible.append(self._pending[:start])
+                self._pending = self._pending[start + len(_OPEN_THINK) :]
+                self._in_think = True
+
+    def flush(self) -> str:
+        """Emit any retained tail at end of stream; unclosed <think> is dropped."""
+        tail = self._pending
+        self._pending = ""
+        return "" if self._in_think else tail
+
+
+class LiveTokenStream:
+    """Typewriter renderer for streamed answer tokens.
+
+    A fresh instance covers one answer segment; a tool call ends the segment
+    (`end_segment`) and streaming continues on a new line. `segment_printed`
+    tells the runner whether the final answer was already shown live (so it
+    can skip rendering the duplicate final panel). The console is injectable
+    for tests.
+    """
+
+    PREFIX = "✨ "
+
+    def __init__(self, console_: Console | None = None) -> None:
+        self._console = console_ if console_ is not None else console
+        self._filter = ThinkTagFilter()
+        self._open = False
+        self.segment_printed = False
+
+    def _write(self, text: str) -> None:
+        self._console.print(text, end="", markup=False, highlight=False)
+
+    def feed(self, token: str) -> None:
+        """Show one token chunk (think-tag filtered) on the live line."""
+        text = self._filter.feed(token)
+        if not text:
+            return
+        if not self._open:
+            self._console.print()  # fresh line under the "Thinking…" status
+            self._console.print(self.PREFIX, style="bold cyan", end="")
+            self._open = True
+        self._write(text)
+        self.segment_printed = True
+
+    def end_segment(self) -> None:
+        """A tool call interrupts the narration: close the line, reset state."""
+        tail = self._filter.flush()
+        if tail:
+            self._write(tail)
+        if self._open:
+            self._console.print()
+            self._open = False
+        self._filter = ThinkTagFilter()
+        self.segment_printed = False
+
+    def finish(self) -> None:
+        """End of the whole answer stream: flush the tail and close the line."""
+        tail = self._filter.flush()
+        if tail:
+            if not self._open:
+                self._console.print()
+                self._console.print(self.PREFIX, style="bold cyan", end="")
+                self._open = True
+            self._write(tail)
+            self.segment_printed = True
+        if self._open:
+            self._console.print()
+            self._open = False
+
+
+def render_retry(attempt: int, total: int, delay: float) -> None:
+    console.print(
+        f"[yellow]⚠ Attempt {attempt}/{total} hit a transient error — "
+        f"retrying in {delay:.1f}s…[/yellow]"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Startup / status
 # --------------------------------------------------------------------------- #
 
@@ -261,6 +385,9 @@ __all__ = [
     "strip_thinking",
     "fmt_args",
     "preview",
+    "ThinkTagFilter",
+    "LiveTokenStream",
+    "render_retry",
     "print_banner",
     "render_initialising",
     "render_ready",
