@@ -6,6 +6,7 @@ Tools:
   - get_current_datetime — date, time, timezone, countdown helpers
   - get_weather      — real-time weather via wttr.in (no API key)
   - wikipedia_search — Wikipedia article summary lookup
+  - web_search       — DuckDuckGo web search for current information
   - unit_converter   — length, weight, temp, speed, area, volume, data, time
 """
 
@@ -28,6 +29,11 @@ try:  # Optional dependency — only needed by the wikipedia_search tool.
 except ImportError:  # pragma: no cover — depends on environment
     _wikipedia = None
 
+try:  # Optional dependency — only needed by the web_search tool.
+    from ddgs import DDGS as _DDGS
+except ImportError:  # pragma: no cover — depends on environment
+    _DDGS = None  # type: ignore[assignment, misc]
+
 # Global tool registry
 _TOOL_REGISTRY: list[BaseTool] = []
 
@@ -38,9 +44,11 @@ _HTTP_SESSION = requests.Session()
 _HTTP_SESSION.mount("https://", HTTPAdapter(max_retries=_HTTP_RETRY))
 _HTTP_SESSION.mount("http://", HTTPAdapter(max_retries=_HTTP_RETRY))
 
-# Result caches: weather changes quickly (minutes), wiki articles rarely do (hours).
+# Result caches: weather changes quickly (minutes), wiki articles rarely do (hours),
+# search results sit in between (news ages in minutes-to-hours).
 _WEATHER_CACHE = TTLCache(ttl=config.WEATHER_CACHE_TTL)
 _WIKI_CACHE = TTLCache(ttl=config.WIKIPEDIA_CACHE_TTL)
+_SEARCH_CACHE = TTLCache(ttl=config.SEARCH_CACHE_TTL)
 
 
 def tool(func):
@@ -363,7 +371,60 @@ def wikipedia_search(query: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 5. Unit Converter
+# 5. Web Search — DuckDuckGo (ddgs package, no API key)
+# ---------------------------------------------------------------------------
+
+
+def _ddgs_text(query: str, max_results: int) -> list[dict]:
+    """Thin wrapper around ddgs — the single patch point for tests."""
+    return list(_DDGS().text(query, max_results=max_results))
+
+
+@tool
+def web_search(query: str, max_results: int = 5) -> str:
+    """
+    Search the web (DuckDuckGo) for current information beyond your knowledge
+    cutoff — news, recent events, library versions, prices, sports results,
+    people, or any fact you are unsure about.
+
+    Args:
+        query: short keyword query (e.g. 'langgraph 1.0 release date'),
+               in the same language as the user's question
+        max_results: how many results to return (1-8, default 5)
+
+    Returns numbered results with title, URL and a content snippet.
+    Cite the URLs you used in the final answer.
+    """
+    if _DDGS is None:  # pragma: no cover — depends on environment
+        return "web_search unavailable: the 'ddgs' package is not installed (pip install ddgs)."
+
+    max_results = max(1, min(int(max_results), 8))
+    cache_key = " ".join(query.split()).lower()
+    cached = _SEARCH_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        rows = _ddgs_text(query, max_results)
+    except Exception as exc:
+        return f"Web search failed for '{query}': {exc}"
+
+    if not rows:
+        return f"No results found for '{query}'. Try different keywords."
+
+    blocks = []
+    for i, row in enumerate(rows, 1):
+        title = (row.get("title") or "(untitled)").strip()
+        url = (row.get("href") or row.get("url") or "").strip()
+        snippet = (row.get("body") or "").strip()
+        blocks.append(f"{i}. {title}\n   {url}\n   {snippet}")
+    result = "\n\n".join(blocks)
+    _SEARCH_CACHE.set(cache_key, result)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 6. Unit Converter
 # ---------------------------------------------------------------------------
 
 # Conversion tables — all values are multipliers to the SI base unit.

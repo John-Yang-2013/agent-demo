@@ -7,6 +7,7 @@ EXPECTED_TOOLS = {
     "get_current_datetime",
     "get_weather",
     "wikipedia_search",
+    "web_search",
     "unit_converter",
 }
 

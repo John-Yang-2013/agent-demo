@@ -47,6 +47,9 @@ class AgentConfig(BaseModel):
     WIKIPEDIA_CACHE_TTL: int = Field(
         default=3600, ge=1, le=86400, description="TTL for cached Wikipedia summaries"
     )
+    SEARCH_CACHE_TTL: int = Field(
+        default=300, ge=1, le=86400, description="TTL for cached web-search results"
+    )
 
     # Model context / generation limits
     NUM_CTX: int = Field(
@@ -86,6 +89,7 @@ _ENV_FIELDS = (
     "HISTORY_MAX_MESSAGES",
     "WEATHER_CACHE_TTL",
     "WIKIPEDIA_CACHE_TTL",
+    "SEARCH_CACHE_TTL",
     "NUM_CTX",
     "NUM_PREDICT",
     "STREAM_TOKENS",
