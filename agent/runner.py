@@ -13,6 +13,8 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from . import ui
+from .config import config
+from .memory import ConversationMemory
 from .scenarios import DEMO_SCENARIOS
 
 # Connection-related substrings that indicate the Ollama server is unreachable.
@@ -47,12 +49,21 @@ def run_query(
     query: str,
     recursion_limit: int = 31,
     show_panel: bool = True,
+    memory: ConversationMemory | None = None,
 ) -> str | None:
-    """Stream the agent, render tool calls + results, return the final answer."""
+    """Stream the agent, render tool calls + results, return the final answer.
+
+    When ``memory`` is given the dialogue is multi-turn: prior history is
+    replayed to the agent and the finished exchange (user message + agent
+    replies and tool traffic) is appended to the memory afterwards. Without
+    it the call stays stateless, exactly as before.
+    """
     if show_panel:
         ui.render_user_query(query)
 
-    messages = [HumanMessage(content=query)]
+    history = memory.as_list() if memory is not None else []
+    messages = [*history, HumanMessage(content=query)]
+    new_turn: list[Any] = [HumanMessage(content=query)]
     final_answer: str | None = None
     tool_step = 0
 
@@ -68,6 +79,7 @@ def run_query(
             # we only care about the messages, not the node names.
             messages_container: dict = next(iter(event.values()), {})
             for msg in messages_container.get("messages", []):
+                new_turn.append(msg)
                 if isinstance(msg, AIMessage):
                     if msg.tool_calls:
                         for tc in msg.tool_calls:
@@ -86,6 +98,9 @@ def run_query(
             ui.render_final_answer(final_answer)
         else:
             ui.render_no_answer()
+
+        if memory is not None:
+            memory.add_turn(new_turn)
 
         return final_answer
 
@@ -132,8 +147,9 @@ def run_demo_mode(agent, recursion_limit: int) -> None:
 
 
 def run_interactive_mode(agent, recursion_limit: int) -> None:
-    """REPL: read user input, dispatch commands, run queries until quit."""
+    """Multi-turn REPL: keeps conversation memory until the user quits or clears."""
     ui.render_welcome()
+    memory = ConversationMemory(config.HISTORY_MAX_MESSAGES)
 
     while True:
         try:
@@ -159,8 +175,13 @@ def run_interactive_mode(agent, recursion_limit: int) -> None:
             ui.render_help()
             continue
 
+        if cmd == "clear":
+            memory.clear()
+            ui.render_memory_cleared()
+            continue
+
         ui.render_blank()
-        run_query(agent, user_input, recursion_limit=recursion_limit)
+        run_query(agent, user_input, recursion_limit=recursion_limit, memory=memory)
         ui.render_blank()
 
 

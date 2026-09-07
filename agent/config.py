@@ -32,6 +32,33 @@ class AgentConfig(BaseModel):
         default=15, ge=1, le=100, description="Max ReAct loop steps before giving up"
     )
 
+    # Conversation memory (stage 2)
+    HISTORY_MAX_MESSAGES: int = Field(
+        default=12,
+        ge=2,
+        le=100,
+        description="Sliding window (in messages) replayed to the LLM each turn",
+    )
+
+    # Tool result caches (seconds)
+    WEATHER_CACHE_TTL: int = Field(
+        default=600, ge=1, le=86400, description="TTL for cached weather lookups"
+    )
+    WIKIPEDIA_CACHE_TTL: int = Field(
+        default=3600, ge=1, le=86400, description="TTL for cached Wikipedia summaries"
+    )
+
+    # Model context / generation limits
+    NUM_CTX: int = Field(
+        default=8192,
+        ge=512,
+        le=131072,
+        description="Ollama context window — must fit history + tool traffic",
+    )
+    NUM_PREDICT: int = Field(
+        default=4096, ge=128, le=32768, description="Max tokens the model may generate"
+    )
+
     @property
     def RECURSION_LIMIT(self) -> int:
         """LangGraph recursion limit = MAX_ITERATIONS * 2 + 1."""
@@ -40,7 +67,17 @@ class AgentConfig(BaseModel):
 
 # Environment variables that map 1:1 onto config fields (all uppercase).
 # Set them in the shell or in `.env` before this module is first imported.
-_ENV_FIELDS = ("OLLAMA_BASE_URL", "MODEL_NAME", "TEMPERATURE", "MAX_ITERATIONS")
+_ENV_FIELDS = (
+    "OLLAMA_BASE_URL",
+    "MODEL_NAME",
+    "TEMPERATURE",
+    "MAX_ITERATIONS",
+    "HISTORY_MAX_MESSAGES",
+    "WEATHER_CACHE_TTL",
+    "WIKIPEDIA_CACHE_TTL",
+    "NUM_CTX",
+    "NUM_PREDICT",
+)
 
 _config: AgentConfig | None = None
 

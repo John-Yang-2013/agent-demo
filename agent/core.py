@@ -44,7 +44,8 @@ def create_agent():
         model=config.MODEL_NAME,
         base_url=config.OLLAMA_BASE_URL,
         temperature=config.TEMPERATURE,
-        num_predict=4096,
+        num_ctx=config.NUM_CTX,
+        num_predict=config.NUM_PREDICT,
     )
 
     prompt = _build_system_prompt()

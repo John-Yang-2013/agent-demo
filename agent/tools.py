@@ -18,6 +18,10 @@ from urllib.parse import quote
 import requests
 from langchain_core.tools import BaseTool
 from langchain_core.tools import tool as lc_tool
+from requests.adapters import HTTPAdapter, Retry
+
+from .cache import TTLCache
+from .config import config
 
 try:  # Optional dependency — only needed by the wikipedia_search tool.
     import wikipedia as _wikipedia
@@ -26,6 +30,17 @@ except ImportError:  # pragma: no cover — depends on environment
 
 # Global tool registry
 _TOOL_REGISTRY: list[BaseTool] = []
+
+# Shared HTTP session: connection pooling + automatic retry/backoff for
+# transient network failures (429 / 5xx) on outbound tool requests.
+_HTTP_RETRY = Retry(total=2, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504))
+_HTTP_SESSION = requests.Session()
+_HTTP_SESSION.mount("https://", HTTPAdapter(max_retries=_HTTP_RETRY))
+_HTTP_SESSION.mount("http://", HTTPAdapter(max_retries=_HTTP_RETRY))
+
+# Result caches: weather changes quickly (minutes), wiki articles rarely do (hours).
+_WEATHER_CACHE = TTLCache(ttl=config.WEATHER_CACHE_TTL)
+_WIKI_CACHE = TTLCache(ttl=config.WIKIPEDIA_CACHE_TTL)
 
 
 def tool(func):
@@ -215,10 +230,15 @@ def get_weather(location: str) -> str:
     Returns temperature (°C / °F), feels-like, conditions, humidity,
     wind speed & direction, visibility, and UV index.
     """
+    cache_key = location.strip().lower()
+    cached = _WEATHER_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         url = f"https://wttr.in/{quote(location)}?format=j1"
         headers = {"User-Agent": "AgentDemo/1.0 (github.com/ai-agent-demo)"}
-        response = requests.get(url, headers=headers, timeout=12)
+        response = _HTTP_SESSION.get(url, headers=headers, timeout=12)
         response.raise_for_status()
         data = response.json()
 
@@ -256,7 +276,7 @@ def get_weather(location: str) -> str:
                 f"  Expected    : {tmr_desc}"
             )
 
-        return (
+        result = (
             f"Weather in {location_str}:\n"
             f"  Conditions  : {description}\n"
             f"  Temperature : {temp_c}°C / {temp_f}°F\n"
@@ -269,6 +289,8 @@ def get_weather(location: str) -> str:
             f"  UV Index    : {uv_index}"
             f"{forecast_lines}"
         )
+        _WEATHER_CACHE.set(cache_key, result)
+        return result
     except requests.Timeout:
         return f"Weather service timed out for '{location}'. Try again or check your connection."
     except requests.HTTPError as exc:
@@ -293,6 +315,11 @@ def wikipedia_search(query: str) -> str:
     Input: a topic name or natural-language query.
     Returns: article title, 5-sentence summary, and source URL.
     """
+    cache_key = query.strip().lower()
+    cached = _WIKI_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         if _wikipedia is None:
             return "Wikipedia package not installed. Run: pip install wikipedia"
@@ -307,18 +334,22 @@ def wikipedia_search(query: str) -> str:
             try:
                 page = wiki.page(title, auto_suggest=False)
                 summary = wiki.summary(title, sentences=6, auto_suggest=False)
-                return f"**{page.title}**\n\n" f"{summary}\n\n" f"Source: {page.url}"
+                result = f"**{page.title}**\n\n" f"{summary}\n\n" f"Source: {page.url}"
+                _WIKI_CACHE.set(cache_key, result)
+                return result
             except wiki.DisambiguationError as exc:
                 # Try the first disambiguation option
                 if exc.options:
                     try:
                         page = wiki.page(exc.options[0], auto_suggest=False)
                         summary = wiki.summary(exc.options[0], sentences=6, auto_suggest=False)
-                        return (
+                        result = (
                             f"**{page.title}** (disambiguation resolved)\n\n"
                             f"{summary}\n\n"
                             f"Source: {page.url}"
                         )
+                        _WIKI_CACHE.set(cache_key, result)
+                        return result
                     except Exception:
                         continue
             except wiki.PageError:

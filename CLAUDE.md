@@ -32,8 +32,8 @@
 
 ### 通用
 - 遵循现有风格：模块级常量大写下划线、函数小写下划线、详细 docstring。
-- 新增工具必须：`@tool` 装饰 + 详细 docstring（含 args/examples）+ 加入 `TOOLS` 列表。
-- 修改 system prompt 时同步更新「Available tools」清单。
+- 新增工具只需：`@tool` 装饰器（`agent/tools.py` 内定义即自动注册）+ 详细 docstring（含 args/examples，首行会作为工具摘要）。
+- system prompt 与 CLI banner 由工具注册表动态生成，无需手动同步清单。
 - 所有新函数加类型注解，保持小而单一职责。
 - 不要改动无关文件或大规模重排格式。
 
@@ -59,7 +59,7 @@
 - 违反单一职责；难以测试、难以复用（例如想加 web 前端就要重写）。
 - **建议**：拆分为 `cli.py`（argparse 入口）、`ui.py`（Rich 渲染）、`runner.py`（agent 调用编排）、`scenarios.py`（demo 数据）。
 
-**R2. 交互模式无对话历史**
+**R2. 交互模式无对话历史** ✅ 已修复（阶段二：`agent/memory.py` 滑动窗口记忆）
 - `run_interactive_mode` 每轮调用 `run_query` 都新建 `messages=[HumanMessage(...)]`，agent 完全无状态。
 - 用户问"刚才那个再说一遍"会失败，无法多轮追问。
 - **建议**：维护 `chat_history: list[BaseMessage]`，每轮 append 后传入。
@@ -87,7 +87,7 @@
 - `"celsius"[0]=="c"`、`"kelvin"[0]=="k"` 恰好成立，但语义脆弱、不可读。
 - **建议**：显式别名映射 `{"celsius":"c","c":"c","fahrenheit":"f",...}`。
 
-**R8. `get_weather` 用裸 `requests.get`，无连接复用 / 无缓存**
+**R8. `get_weather` 用裸 `requests.get`，无连接复用 / 无缓存** ✅ 已修复（`_HTTP_SESSION` + `agent/cache.py` TTLCache）
 - 每次新建连接；同一城市连问两次都打 API。
 - **建议**：用 `requests.Session`（模块级）+ 短 TTL 内存缓存（`functools.lru_cache` 或显式 dict + 过期时间）。
 
@@ -95,7 +95,7 @@
 - 无注释说明为何 ×2 +1。LangGraph 每个工具调用产生 2 个递归步（agent 节点 + tool 节点），+1 余量。但读者不知。
 - **建议**：加注释解释，或直接暴露 `RECURSION_LIMIT` 为独立 env 变量。
 
-**R10. `num_predict=4096` 硬编码在 `core.py`**
+**R10. `num_predict=4096` 硬编码在 `core.py`** ✅ 已修复（`NUM_PREDICT` / `NUM_CTX` 纳入 config，env 可调）
 - 不可通过 env 调整，`num_ctx` 也未设置。
 - **建议**：纳入 `config.py`（`NUM_PREDICT`、`NUM_CTX`）。
 
@@ -138,11 +138,11 @@
 5. requirements 改用版本约束 + `requirements-dev.txt`。
 
 ### 阶段二：Agent 能力增强
-6. **对话记忆**：交互模式维护 history，支持多轮追问（用 LangGraph 的 `MemorySaver` 或手动 message list + 滑动窗口截断）。
-7. **工具动态注册**：从目录/配置自动发现工具，system prompt 由 `TOOLS` 生成。
-8. **工具结果缓存**：weather/wikipedia 加 TTL 缓存。
-9. **重试与超时**：LLM 调用 + 工具调用加指数退避重试。
-10. **流式 token 输出**：`stream_mode="values"` 或 `astream` 实现 token 级打字机效果。
+6. ✅ **对话记忆**：`agent/memory.py` 滑动窗口（`HISTORY_MAX_MESSAGES`），交互模式多轮追问，`clear` 命令重置。
+7. ✅ **工具动态注册**：`@tool` 装饰器自动注册到 `_TOOL_REGISTRY`，system prompt / banner 动态生成。
+8. ✅ **工具结果缓存**：`agent/cache.py` TTLCache（weather 10 分钟 / wikipedia 1 小时，env 可调）。
+9. 🟡 **重试与超时**：工具 HTTP 层已完成（`requests.Session` + urllib3 `Retry` 指数退避）；LLM 调用层重试待做。
+10. ⏳ **流式 token 输出**：`stream_mode="values"` 或 `astream` 实现 token 级打字机效果。
 
 ### 阶段三：能力扩展（更"Agent"）
 11. **新工具**：web 搜索（DuckDuckGo/SerpAPI）、文件读写、代码执行（沙箱）、RAG 文档检索。
@@ -177,6 +177,7 @@ python main.py -q "Convert 5 mi to km"
 ## 6. 已知假设 / 限制
 
 - 当前仅支持单用户、单进程、终端交互。
-- 无持久化记忆（重启丢失对话）。
+- 对话记忆为进程内滑动窗口（`HISTORY_MAX_MESSAGES`，默认 12 条），重启即失；跨会话持久化待做。
+- 工具缓存为进程内 TTL 缓存（weather 10 分钟 / wikipedia 1 小时），同样不跨进程。
 - 工具调用无并发（LangGraph ReAct 串行）。
 - weather/wikipedia 依赖外网，离线不可用。

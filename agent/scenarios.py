@@ -85,6 +85,7 @@ HELP_TEXT = """\
 | Units | `Convert 90 mph to km/h` |
 | Units | `Convert 98.6°F to Celsius and Kelvin` |
 | Multi | `A 10K race at 8 min/mile — how long in minutes and seconds?` |
+| Memory | `What is 2^10?` then follow up: `now multiply that by 3` |
 
-Type **demo** to run the showcase · **help** to see this · **quit** to exit
+Type **demo** to run the showcase · **help** to see this · **clear** to reset history · **quit** to exit
 """

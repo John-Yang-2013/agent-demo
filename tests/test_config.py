@@ -44,3 +44,25 @@ def test_out_of_range_temperature_rejected() -> None:
 def test_invalid_url_scheme_rejected() -> None:
     with pytest.raises(ValidationError):
         AgentConfig(OLLAMA_BASE_URL="ftp://nope")
+
+
+def test_stage2_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Memory window, cache TTLs and context limits are env-configurable."""
+    monkeypatch.setenv("HISTORY_MAX_MESSAGES", "6")
+    monkeypatch.setenv("WEATHER_CACHE_TTL", "30")
+    monkeypatch.setenv("NUM_CTX", "4096")
+    cfg = AgentConfig(**_env_overrides())
+    assert cfg.HISTORY_MAX_MESSAGES == 6
+    assert cfg.WEATHER_CACHE_TTL == 30
+    assert cfg.NUM_CTX == 4096
+
+
+def test_stage2_defaults_and_validation() -> None:
+    cfg = AgentConfig()
+    assert cfg.HISTORY_MAX_MESSAGES == 12
+    assert cfg.WEATHER_CACHE_TTL == 600
+    assert cfg.WIKIPEDIA_CACHE_TTL == 3600
+    assert cfg.NUM_CTX == 8192
+    assert cfg.NUM_PREDICT == 4096
+    with pytest.raises(ValidationError):
+        AgentConfig(NUM_CTX=128)  # below ge=512

@@ -228,7 +228,7 @@ def render_welcome() -> None:
             "I have access to real-time tools — ask me to calculate, look up weather,\n"
             "search Wikipedia, convert units, or check the current date and time.\n\n"
             "Commands: [bold cyan]demo[/bold cyan]  ·  [bold cyan]help[/bold cyan]  ·  "
-            "[bold red]quit[/bold red]",
+            "[bold cyan]clear[/bold cyan]  ·  [bold red]quit[/bold red]",
             title="[bold cyan]Welcome[/bold cyan]",
             border_style="cyan",
         )
@@ -238,6 +238,10 @@ def render_welcome() -> None:
 
 def render_help() -> None:
     console.print(Panel(Markdown(HELP_TEXT), border_style="yellow", title="[yellow]Help[/yellow]"))
+
+
+def render_memory_cleared() -> None:
+    console.print("[yellow]🧹 Conversation history cleared.[/yellow]")
 
 
 def render_goodbye() -> None:
@@ -277,6 +281,7 @@ __all__ = [
     "render_demo_results_table",
     "render_welcome",
     "render_help",
+    "render_memory_cleared",
     "render_goodbye",
     "render_interrupted",
     "prompt_user",
