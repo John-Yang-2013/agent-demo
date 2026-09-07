@@ -15,14 +15,21 @@
 - UI：`rich`（终端面板 / Markdown 渲染 / 表格）
 - 运行时：Python 3.12，`pyenv-virtualenv`（环境名 `agent`）
 
-**5 个工具**：
+**10 个工具**：
 | 工具 | 职责 | 实现要点 |
 |---|---|---|
 | `calculator` | 安全算术求值 | 基于 AST 白名单的 `_safe_eval_node`，禁用任意属性访问 |
 | `get_current_datetime` | 时区日期时间 | `zoneinfo.ZoneInfo`，含星期、周数、年内剩余天数 |
-| `get_weather` | 实时天气 | `wttr.in` JSON API（免 key） |
-| `wikipedia_search` | 知识摘要 | `wikipedia` 库，含消歧义回退 |
+| `get_weather` | 实时天气 | `wttr.in` JSON API（免 key），TTLCache 10 分钟 |
+| `wikipedia_search` | 知识摘要 | `wikipedia` 库，含消歧义回退，TTLCache 1 小时 |
+| `web_search` | Web 搜索 | DuckDuckGo（`ddgs` 包，免 key），编号结果含 URL，TTLCache 5 分钟 |
+| `submit_calculation` | 结构化结果提交 | pydantic `CalculationResult` 校验；非法提交回喂错误供模型自我修正 |
 | `unit_converter` | 单位换算 | 7 类线性换算表 + 温度非线性特例 |
+| `read_file` | 读沙箱文件 | 相对 `SANDBOX_DIR`，拒绝 `../` 与绝对路径，超长截断 |
+| `write_file` | 写沙箱文件 | 自动建父目录；覆盖已存在文件需人工确认 |
+| `list_files` / `delete_file` | 列出/删除沙箱文件 | 递归列表（上限 50）；删除必须人工确认 |
+
+文件沙箱（`agent/sandbox.py`）：确认策略为可注入钩子（测试）/ REPL 交互 y-N / 非 TTY 自动拒绝 / `SANDBOX_CONFIRM=false` 脚本模式放行；`SANDBOX_ENABLED=false` 可整体禁用。
 
 **三种运行模式**：交互式 REPL / 单次查询（`-q`）/ 自动演示（`--demo`，7 个场景）
 
@@ -144,16 +151,16 @@
 9. ✅ **重试与超时**：工具 HTTP 层 `requests.Session` + urllib3 `Retry` 指数退避；LLM 调用层瞬态错误指数退避重跑（`LLM_RETRIES`/`LLM_RETRY_DELAY`，`_is_transient` 启发式判定）。
 10. ✅ **流式 token 输出**：`stream_mode=["updates","messages"]` 双模式 — updates 保留工具渲染与记忆，messages 逐 token 打字机（`LiveTokenStream`）；`ThinkTagFilter` 处理跨 chunk 分裂的 `<think>` 标签；`STREAM_TOKENS=false` 回退经典面板。
 
-### 阶段三：能力扩展（更"Agent"）
-11. **新工具**：web 搜索（DuckDuckGo/SerpAPI）、文件读写、代码执行（沙箱）、RAG 文档检索。
-12. **结构化输出**：对计算/换算类调用用 `with_structured_output` 保证返回 schema。
-13. **多 Agent / 路由**：LangGraph 多节点，按问题类型路由到子 agent。
-14. **人机协作（Human-in-the-loop）**：危险工具调用前打断确认。
-15. **可观测性**：接入 LangSmith / 本地日志，记录每次工具调用链。
-16. **MCP 协议支持**：让 Agent 能消费外部 MCP server 的工具，成为开放生态。
+### 阶段三：能力扩展（更"Agent"）— 精简版已全部完成
+11. ✅ **Web 搜索**：`web_search`（`ddgs` 包，DuckDuckGo 免 key），TTLCache 300s，失败不缓存。❄️ 搁置：代码执行沙箱、RAG。
+12. ✅ **结构化输出**：以工具调用 schema 实现（`submit_calculation` + pydantic `CalculationResult`）——`with_structured_output` 与工具调用型 agent 不兼容（会强制所有回复同一 schema），故反向设计：参数即 schema，非法提交报错回喂自我修正。schema 在 `agent/schemas.py`。
+13. ❄️ **多 Agent / 路由**：搁置（超出精简范围）。
+14. ✅ **人机协作（Human-in-the-loop）**：文件沙箱的覆盖/删除操作需确认（`agent/sandbox.py`：REPL y-N、非 TTY 拒绝、`SANDBOX_CONFIRM=false` 放行、测试可注入钩子）。
+15. ❄️ **可观测性**：搁置。
+16. ❄️ **MCP 协议支持**：搁置。
 
-### 阶段四：产品化
-17. **配置体系升级**：`pydantic-settings` 替代裸 `os.getenv`，带校验与类型。
+### 阶段四：产品化 — ❄️ 搁置（不计划）
+17. **配置体系升级**：`pydantic-settings` 替代裸 `os.getenv`，带校验与类型。（注：`agent/config.py` 已用 pydantic BaseModel + env 映射实现大半）
 18. **多后端支持**：不只 Ollama，支持 OpenAI / Anthropic / vLLM 通过 `init_chat_model`。
 19. **Web UI**：FastAPI + 前端，复用 `runner.py`。
 20. **插件机制**：第三方按约定放一个 `@tool` 文件即被加载。
@@ -178,6 +185,8 @@ python main.py -q "Convert 5 mi to km"
 
 - 当前仅支持单用户、单进程、终端交互。
 - 对话记忆为进程内滑动窗口（`HISTORY_MAX_MESSAGES`，默认 12 条），重启即失；跨会话持久化待做。
-- 工具缓存为进程内 TTL 缓存（weather 10 分钟 / wikipedia 1 小时），同样不跨进程。
+- 工具缓存为进程内 TTL 缓存（weather 10 分钟 / wikipedia 1 小时 / web_search 5 分钟），同样不跨进程。
 - 工具调用无并发（LangGraph ReAct 串行）。
-- weather/wikipedia 依赖外网，离线不可用。
+- weather/wikipedia/web_search 依赖外网，离线不可用。
+- 文件沙箱只做路径包含检查与人工确认，非系统级隔离（无 symlink 防护、无配额）；`workspace/` 已 gitignore。
+- `langchain-ollama` 需 >=1.1 且 `MODEL_REASONING=true`（默认）：Ollama 0.33 的 thinking 分离协议下，1.0.1 / 关闭 reasoning 会丢弃思考通道，模型可能把全部回答写进 thinking 导致最终答案为空（`content=''`）。换非思考模型时设 `MODEL_REASONING=false`。

@@ -19,6 +19,15 @@ class AgentConfig(BaseModel):
     )
     MODEL_NAME: str = Field(default="qwen3.5", description="Name of the Ollama model to use")
 
+    # Reasoning models (qwen3.5 etc.) — stream thinking separately from content.
+    # Required for correct final answers with Ollama >=0.33 + thinking models:
+    # without it the client drops the thinking channel and the model may emit
+    # its whole answer into thinking, leaving content empty.
+    MODEL_REASONING: bool = Field(
+        default=True,
+        description="Separate thinking channel (reasoning models); turn off for non-thinking models",
+    )
+
     # LLM behavior
     TEMPERATURE: float = Field(
         default=0.1,
@@ -73,6 +82,25 @@ class AgentConfig(BaseModel):
         default=1.0, ge=0.0, le=30.0, description="Base retry delay (s) — doubles each retry"
     )
 
+    # File sandbox (stage 3)
+    SANDBOX_ENABLED: bool = Field(
+        default=True, description="Enable the read/write/list/delete file tools"
+    )
+    SANDBOX_DIR: str = Field(
+        default="workspace",
+        description="Sandbox root directory for file tools (relative or absolute)",
+    )
+    SANDBOX_CONFIRM: bool = Field(
+        default=True,
+        description="Ask a human before overwrite/delete (false = scripting mode, auto-allow)",
+    )
+    SANDBOX_MAX_READ_CHARS: int = Field(
+        default=8000,
+        ge=200,
+        le=200_000,
+        description="read_file truncation limit to protect the LLM context",
+    )
+
     @property
     def RECURSION_LIMIT(self) -> int:
         """LangGraph recursion limit = MAX_ITERATIONS * 2 + 1."""
@@ -84,6 +112,7 @@ class AgentConfig(BaseModel):
 _ENV_FIELDS = (
     "OLLAMA_BASE_URL",
     "MODEL_NAME",
+    "MODEL_REASONING",
     "TEMPERATURE",
     "MAX_ITERATIONS",
     "HISTORY_MAX_MESSAGES",
@@ -95,6 +124,10 @@ _ENV_FIELDS = (
     "STREAM_TOKENS",
     "LLM_RETRIES",
     "LLM_RETRY_DELAY",
+    "SANDBOX_ENABLED",
+    "SANDBOX_DIR",
+    "SANDBOX_CONFIRM",
+    "SANDBOX_MAX_READ_CHARS",
 )
 
 _config: AgentConfig | None = None

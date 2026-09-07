@@ -68,6 +68,8 @@ def tool(func):
 
 def get_tools():
     """Get all registered tools as langchain tool instances."""
+    from . import sandbox  # noqa: F401 — importing registers the sandbox tools
+
     return _TOOL_REGISTRY.copy()
 
 

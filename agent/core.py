@@ -35,6 +35,9 @@ Rules:
    calculator / unit_converter, then call submit_calculation with the final
    numbers, and FINALLY still write a normal text answer to the user —
    submitting alone is not enough.
+7. File operations ONLY through read_file / write_file / list_files /
+   delete_file, always with paths RELATIVE to the sandbox root. Never
+   construct absolute paths or '../' — they are rejected.
 """
 
 
@@ -50,6 +53,7 @@ def create_agent():
         temperature=config.TEMPERATURE,
         num_ctx=config.NUM_CTX,
         num_predict=config.NUM_PREDICT,
+        reasoning=config.MODEL_REASONING,
     )
 
     prompt = _build_system_prompt()

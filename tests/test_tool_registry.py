@@ -10,6 +10,10 @@ EXPECTED_TOOLS = {
     "web_search",
     "submit_calculation",
     "unit_converter",
+    "read_file",
+    "write_file",
+    "list_files",
+    "delete_file",
 }
 
 
