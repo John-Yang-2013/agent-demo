@@ -1,7 +1,7 @@
 # Runtime dependencies — versions pinned to compatible ranges.
 langchain>=1.0,<2.0
 langchain-core>=1.0,<2.0
-langchain-ollama>=1.0,<2.0
+langchain-ollama>=1.1,<2.0
 langgraph>=1.0,<2.0
 requests>=2.31,<3.0
 wikipedia>=1.4,<2.0

@@ -31,6 +31,10 @@ Rules:
 3. When a tool returns data, incorporate all relevant numbers in your answer.
 4. Be concise but complete. Use markdown formatting where helpful.
 5. If a tool call fails, explain why and suggest an alternative if possible.
+6. For ANY arithmetic or unit-conversion question: first compute with
+   calculator / unit_converter, then call submit_calculation with the final
+   numbers, and FINALLY still write a normal text answer to the user —
+   submitting alone is not enough.
 """
 
 

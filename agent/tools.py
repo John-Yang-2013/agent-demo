@@ -7,6 +7,7 @@ Tools:
   - get_weather      — real-time weather via wttr.in (no API key)
   - wikipedia_search — Wikipedia article summary lookup
   - web_search       — DuckDuckGo web search for current information
+  - submit_calculation — structured (schema-validated) result submission
   - unit_converter   — length, weight, temp, speed, area, volume, data, time
 """
 
@@ -19,10 +20,12 @@ from urllib.parse import quote
 import requests
 from langchain_core.tools import BaseTool
 from langchain_core.tools import tool as lc_tool
+from pydantic import ValidationError
 from requests.adapters import HTTPAdapter, Retry
 
 from .cache import TTLCache
 from .config import config
+from .schemas import CalculationResult
 
 try:  # Optional dependency — only needed by the wikipedia_search tool.
     import wikipedia as _wikipedia
@@ -424,7 +427,59 @@ def web_search(query: str, max_results: int = 5) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 6. Unit Converter
+# 6. Structured output — schema-validated result submission
+# ---------------------------------------------------------------------------
+
+# Last accepted structured result, for introspection/tests. A dict (not the
+# model itself) so the store can be reset/cleared without import gymnastics.
+_LAST_STRUCTURED: dict[str, CalculationResult] = {}
+
+
+def get_last_structured() -> CalculationResult | None:
+    """Return the most recently accepted structured result (if any)."""
+    return _LAST_STRUCTURED.get("result")
+
+
+@tool
+def submit_calculation(
+    expression: str,
+    value: float,
+    unit: str | None = None,
+    category: str = "calculation",
+    explanation: str = "",
+) -> str:
+    """
+    Submit the final STRUCTURED result for an arithmetic or unit-conversion
+    question. Call this AFTER computing the answer with calculator or
+    unit_converter — the fields are validated, and invalid submissions are
+    rejected with an explanation so you can fix and re-submit.
+
+    Args:
+        expression: the expression performed, e.g. '2 ** 10' or '100 mph -> kph'
+        value: the numeric result you obtained from the tool
+        unit: unit of the result if applicable (e.g. 'kph'), otherwise null
+        category: 'calculation' for arithmetic, 'conversion' for unit conversion
+        explanation: one short sentence explaining the result to the user
+    """
+    try:
+        result = CalculationResult(
+            expression=expression,
+            value=value,
+            unit=unit,
+            category=category,  # type: ignore[arg-type]
+            explanation=explanation,
+        )
+    except ValidationError as exc:
+        return (
+            "Invalid structured result — fix the fields below and call "
+            f"submit_calculation again:\n{exc}"
+        )
+    _LAST_STRUCTURED["result"] = result
+    return f"Structured result accepted:\n{result.model_dump_json()}"
+
+
+# ---------------------------------------------------------------------------
+# 7. Unit Converter
 # ---------------------------------------------------------------------------
 
 # Conversion tables — all values are multipliers to the SI base unit.

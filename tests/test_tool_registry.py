@@ -8,6 +8,7 @@ EXPECTED_TOOLS = {
     "get_weather",
     "wikipedia_search",
     "web_search",
+    "submit_calculation",
     "unit_converter",
 }
 
